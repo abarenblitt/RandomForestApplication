@@ -1,0 +1,823 @@
+//=====================================================================================================================
+//                                        NASA - University of Maryland (ESSIC)
+// Random Forest Application
+//                                                  
+// Code: Random Forest Mangrove Mapping Tool
+// Written by: Abigail Barenblitt NASA Goddard and University of Maryland 
+// Objective: This code creates an application for running a random forest classification
+
+// Date: 10/10/2022
+//     Version: 1.0
+//     Copyright 2022 Abigail Barenblitt 
+//     Permission is hereby granted, free of charge, to any person obtaining a copy
+//     of this software and associated documentation files (the "Software"), to deal
+//     in the Software without restriction, including without limitation the rights
+//     to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+//     copies of the Software, and to permit persons to whom the Software is
+//     furnished to do so, subject to the following conditions:
+//     The above copyright notice and this permission notice shall be included in all
+//     copies or substantial portions of the Software.
+//     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+//     IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+//     FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+//     AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+//     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+//     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+//     SOFTWARE.'''
+
+//=====================================================================================================================
+
+
+//                    ===============================
+//                     Set up GUI Code
+//                    ===============================
+
+Map.setOptions('Satellite')
+Map.setCenter(-33.66, 27.15,3)
+
+
+//Add NASA and SDG Logos
+var logo = ee.Image("projects/mangrovescience/GoddardLogo");
+var logo2 = ee.Image("projects/mangrovescience/SDGLogo");
+var branding = ui.Thumbnail({image:logo,params:{bands:['b1','b2','b3'],min:0,max:255},
+style:{width:'133px',height:'140px',position:'bottom-right',padding: '10px'}});
+var branding2 = ui.Thumbnail({image:logo2,params:{bands:['b1','b2','b3'],min:0,max:255},
+style:{width:'133px',height:'123px',position:'bottom-left',padding: '10px'}});
+
+var logoPan = ui.Panel({
+  style: {
+    width:'300px',
+    height:'150px',
+    position: 'bottom-left',
+    padding: '8px'
+  }
+}).setLayout(ui.Panel.Layout.absolute());
+
+logoPan.add(branding).add(branding2) 
+Map.add(logoPan)
+
+//Adding instructions to user
+
+var panel = ui.Panel({style: {width: '250px'}});
+
+var panelAcc = ui.Panel({style: {width: '150px', position: 'top-left'}});
+var panelAcc2 = ui.Panel({style: {width: '150px', position: 'top-left'}});
+panelAcc.add(ui.Label({value:'Model Accuracy:'})).add(panelAcc2)
+ui.root.add(panel)
+Map.add(panelAcc)
+
+panel.add(ui.Label({value:'Random Forest Mangrove Mapping Tool',
+style: {fontWeight: 'bold', fontSize: '24px', margin: '10px 5px'}
+}));
+
+panel.add(ui.Label({value:'Use this tool to add training features to a random forest model and map mangrove extent for your region of interest in 1990, 2000, 2010, and 2020.',
+style: {color:'gray',fontWeight: 'bold', fontSize: '16px', margin: '10px 5px'}
+}));
+
+panel.add(ui.Label({value:"Citation: Barenblitt, A. 2022. Random Forest Mangrove Mapping Tool. https://mangrovescience.earthengine.app/view/randomforest",
+style: {color:'gray',fontWeight: 'bold', fontSize: '16px', margin: '10px 5px'}
+}));
+
+panel.add(ui.Label({value:'Instructions:',
+style: {color:'blue',fontWeight: 'bold', fontSize: '14px', margin: '10px 5px'}
+}));
+
+panel.add(ui.Label({value:'1) Choose the year of interest from the dropdown menu below.',
+style: {fontSize: '14px', margin: '10px 5px'}
+}));
+
+panel.add(ui.Label({value:'2) Navigate to your region of interest and add a polygon to the "ROI" geometry.',
+style: {fontSize: '14px', margin: '10px 5px'}
+}));
+
+panel.add(ui.Label({value:'3) Use the drawing tools to add training points and polygons to both the Mangrove and NonMangrove feature collections.',
+style: {fontSize: '14px', margin: '10px 5px'}
+}));
+
+panel.add(ui.Label({value:'4) Click "Run Model" to run a Random Forest Classification.',
+style: {fontSize: '14px', margin: '10px 5px'}
+}));
+
+panel.add(ui.Label({value:'This tool will map the unaltered results of the model, as well as the results clipped to within 1 km of the Global Mangrove Watch mangrove extent map.',
+style: {fontSize: '14px', margin: '10px 5px'}
+}));
+
+panel.add(ui.Label({value:'Tips:',
+style: {color:'blue',fontWeight: 'bold', fontSize: '14px', margin: '10px 5px'}
+}));
+
+
+panel.add(ui.Label({value:'Use the landsat imagery displayed to create training points. The landsat imagery displays a false-color composite using'+
+                          ' the Red, NIR, and SWIR bands.'+
+                          ' Change the opacity of this layer in conjunction with the Google Map satellite' +
+                            ' layer to identify vegetation from other landcover types.',
+style: {fontSize: '14px', margin: '10px 5px'}
+}));
+
+panel.add(ui.Label({value:'Adding more training data will yield a better model.' +
+                            'If you notice an error, you may need to add more training data.',
+style: {fontSize: '14px', margin: '10px 5px'}
+}));
+
+panel.add(ui.Label({value:'Please be patient as results are loaded.',
+style: {color:'red',fontWeight: 'bold', fontSize: '14px', margin: '10px 5px'}
+}));
+
+panel.add(ui.Label({value:'Choose a Year:',
+style: {color:'blue',fontWeight: 'bold', fontSize: '14px', margin: '10px 5px'}
+}));
+
+//Dropdown Button
+var y1990 = '1990';
+var y2000 = '2000';
+var y2010 = '2010';
+var y2020 = '2020';
+
+var select = ui.Select({
+  items: [y1990,y2000,y2010,y2020],
+  onChange: redraw,
+});
+panel.add(select);
+
+//Button to run the model 
+
+var runButton = ui.Button({
+              label: 'Run Model'
+              // React to the button's click event.
+    })
+  
+panel.add(runButton)
+
+panel.add(ui.Label({value:'Model Parameters:',
+style: {color:'blue',fontWeight: 'bold', fontSize: '14px', margin: '10px 5px'}
+}));
+
+panel.add(ui.Label({value:'Bands used: Red, NIR, SWIR, NDVI, MNDWI, SR, and GCVI',
+style: {fontSize: '14px', margin: '10px 5px'}
+}));
+
+panel.add(ui.Label({value:'Number of trees: 100',
+style: {fontSize: '14px', margin: '10px 5px'}
+}));
+
+panel.add(ui.Label({value:'Variables per split: 5',
+style: {fontSize: '14px', margin: '10px 5px'}
+}));
+
+
+//                    ===============================
+//                     Create Export Functionality
+//                    ===============================
+
+  /* The export section. */
+var expButton = ui.Button({
+              label: 'Export results to Drive'
+              // React to the button's click event.
+    })
+  
+panel.add(expButton)
+
+
+
+var drawingTools = Map.drawingTools();
+// Only allow drawing points.
+drawingTools.setDrawModes(['point','polygon']);
+
+var layers = drawingTools.layers();
+//print(layers)
+
+
+
+
+
+
+//                    ===============================
+//                     Assemble Landsat Data
+//                    ===============================
+
+// CLOUD MASKING
+
+// Both Collections will have different ways to mask clouds. However, both of them have a pixel QA band. Thus you can
+// use them to mask cloud as follows:
+
+function maskClouds(image) { 
+    var cloudShadowBitMask = ee.Number(2).pow(3).int();// Bits 3 and 5 are cloud shadow and cloud, respectively.
+    var cloudsBitMask = ee.Number(2).pow(5).int();  
+    var qa = image.select('pixel_qa');// Get the pixel QA band.
+    var mask = qa.bitwiseAnd(cloudShadowBitMask).eq(0).and(qa.bitwiseAnd(cloudsBitMask).eq(0));  // Both flags should be set to zero, indicating clear conditions.
+  return image.updateMask(mask).divide(10000).copyProperties(image, ["system:time_start"]);// Return the masked image, scaled to [0, 1].
+}
+
+// This function can then be mapped in both Landsat 7 and 8 Collections
+
+// 2.2 SPECTRAL INDICES
+
+// Both collections have different band numbers that are different, so I created two functions in regard to each individual set of bands 
+
+// This function maps spectral indices for Mangrove Mapping using Landsat 7 Imagery
+var addIndicesL7 = function(img) {
+  // NDVI
+  var ndvi = img.normalizedDifference(['B4','B3']).rename('NDVI');
+  // NDMI (Normalized Difference Mangrove Index - Shi et al 2016 - New spectral metrics for mangrove forest identification)
+  var ndmi = img.normalizedDifference(['B7','B2']).rename('NDMI');
+  // MNDWI (Modified Normalized Difference Water Index - Hanqiu Xu, 2006)
+  var mndwi = img.normalizedDifference(['B2','B5']).rename('MNDWI');
+  // SR (Simple Ratio)
+  var sr = img.select('B4').divide(img.select('B3')).rename('SR');
+  // Band Ratio 54
+  var ratio54 = img.select('B5').divide(img.select('B4')).rename('R54');
+  // Band Ratio 35
+  var ratio35 = img.select('B3').divide(img.select('B5')).rename('R35');
+  // GCVI
+  var gcvi = img.expression('(NIR/GREEN)-1',{
+    'NIR':img.select('B4'),
+    'GREEN':img.select('B2')
+  }).rename('GCVI');
+  return img
+    .addBands(ndvi)
+    .addBands(ndmi)
+    .addBands(mndwi)
+    .addBands(sr)
+    .addBands(ratio54)
+    .addBands(ratio35)
+    .addBands(gcvi);
+};
+
+// This function maps spectral indices for Mangrove Mapping using Landsat 7 Imagery
+var addIndicesL5 = function(img) {
+  // NDVI
+  var ndvi = img.normalizedDifference(['B4','B3']).rename('NDVI');
+  // NDMI (Normalized Difference Mangrove Index - Shi et al 2016 - New spectral metrics for mangrove forest identification)
+  var ndmi = img.normalizedDifference(['B7','B2']).rename('NDMI');
+  // MNDWI (Modified Normalized Difference Water Index - Hanqiu Xu, 2006)
+  var mndwi = img.normalizedDifference(['B2','B5']).rename('MNDWI');
+  // SR (Simple Ratio)
+  var sr = img.select('B4').divide(img.select('B3')).rename('SR');
+  // Band Ratio 54
+  var ratio54 = img.select('B5').divide(img.select('B4')).rename('R54');
+  // Band Ratio 35
+  var ratio35 = img.select('B3').divide(img.select('B5')).rename('R35');
+  // GCVI
+  var gcvi = img.expression('(NIR/GREEN)-1',{
+    'NIR':img.select('B4'),
+    'GREEN':img.select('B2')
+  }).rename('GCVI');
+  return img
+    .addBands(ndvi)
+    .addBands(ndmi)
+    .addBands(mndwi)
+    .addBands(sr)
+    .addBands(ratio54)
+    .addBands(ratio35)
+    .addBands(gcvi);
+};
+// This function maps spectral indices for Mangrove Mapping using Landsat 8 Imagery
+var addIndicesL8 = function(img) {
+  // NDVI
+  var ndvi = img.normalizedDifference(['B5','B4']).rename('NDVI');
+  // NDMI (Normalized Difference Mangrove Index - Shi et al 2016 - New spectral metrics for mangrove forest identification)
+  var ndmi = img.normalizedDifference(['B7','B3']).rename('NDMI');
+  // MNDWI (Modified Normalized Difference Water Index - Hanqiu Xu, 2006)
+  var mndwi = img.normalizedDifference(['B3','B6']).rename('MNDWI');
+  // SR (Simple Ratio)
+  var sr = img.select('B5').divide(img.select('B4')).rename('SR');
+  // Band Ratio 54
+  var ratio54 = img.select('B6').divide(img.select('B5')).rename('R54');
+  // Band Ratio 35
+  var ratio35 = img.select('B4').divide(img.select('B6')).rename('R35');
+  // GCVI
+  var gcvi = img.expression('(NIR/GREEN)-1',{
+    'NIR':img.select('B5'),
+    'GREEN':img.select('B3')
+  }).rename('GCVI');
+  return img
+    .addBands(ndvi)
+    .addBands(ndmi)
+    .addBands(mndwi)
+    .addBands(sr)
+    .addBands(ratio54)
+    .addBands(ratio35)
+    .addBands(gcvi);
+};
+
+
+
+var viridis = {min: 0 , max : 25,palette : ['#481567FF','#482677FF','#453781FF','#404788FF','#39568CFF',
+                                              '#33638DFF','#2D708EFF','#287D8EFF','#238A8DFF','#1F968BFF',
+                                              '#20A387FF','#29AF7FFF','#3CBB75FF','#55C667FF',
+                                              '#73D055FF','#95D840FF','#B8DE29FF','#DCE319FF','#FDE725FF' 
+]};
+
+
+
+
+
+
+//                    ===============================
+//                       COLLECTION PREPARATION
+//                    ===============================
+// 3.1 Spatial Parameters
+// Load a table with country borders
+// Or you can manually draw a geometry around the area of interest and use it instead of AOI/westAfrica variables
+
+// 3.2 Filter Landsat collections by period of interest and map the Cloud Masking and Spectral Indices into the collections
+//   --------------------------
+
+
+// Landsat 5
+// Temporal Parameters
+
+var year = 1990; // Select the desired central year here
+var startDate = (year-4)+'-01-01'; // Start date will be set one year before the central year
+var endDate = (year+4)+'-12-31'; // End date will be set to one year later than the central year.
+
+var L5new = L5.filterDate(startDate,endDate)
+    .map(maskClouds)
+    .map(addIndicesL5)
+    
+var L5Composite = L5new.median()
+
+
+// Landsat 7
+// Temporal Parameters
+
+//2000
+
+var year = 2000; // Select the desired central year here
+var startDate = (year-2)+'-01-01'; // Start date will be set one year before the central year
+var endDate = (year+2)+'-12-31'; // End date will be set to one year later than the central year.
+
+var l72000 = l7SR.filterDate(startDate,endDate)
+    .map(maskClouds)
+    .map(addIndicesL7)
+    
+var L72000Composite = l72000.median()
+
+//2010
+
+var year = 2010; // Select the desired central year here
+var startDate = (year-2)+'-01-01'; // Start date will be set one year before the central year
+var endDate = (year+2)+'-12-31'; // End date will be set to one year later than the central year.
+
+var l72010 = l7SR.filterDate(startDate,endDate)
+    .map(maskClouds)
+    .map(addIndicesL7)
+    
+var L72010Composite = l72010.median()
+
+// Landsat 8
+// Temporal Parameters
+
+var year = 2020; // Select the desired central year here
+var startDate = (year-2)+'-01-01'; // Start date will be set one year before the central year
+var endDate = (year)+'-12-31'; // End date will be set to one year later than the central year.
+
+var l8 = l8SR.filterDate(startDate,endDate)
+    .map(maskClouds)
+    .map(addIndicesL8)
+    
+var L8Composite = l8.median()
+
+var visParI = {bands:['B4','B5','B3'], min: 0, max: 0.35}; // for L5/7
+var visParII = {bands:['B5','B6','B4'], min: 0, max: 0.35}; // for L8
+
+//Masking Landsat Images
+
+// elevation
+var srtmClip = SRTM;
+var elevationMask = srtmClip.lt(65);
+
+//Landsat 5
+var L5NDVIMask = L5Composite.select('NDVI').gt(0.25);
+var L5MNDWIMask = L5Composite.select('MNDWI').gt(-0.50);
+var L5CompositeNew = L5Composite
+                        .updateMask(L5NDVIMask)
+                        .updateMask(L5MNDWIMask)
+                        .updateMask(elevationMask)
+var L5CompositeElev = L5Composite.updateMask(elevationMask)
+
+var L5CompositeMapA = ui.Map.Layer(L5CompositeElev.clip(EEZ), visParI, 'Landsat Composite')
+                        
+var L5CompositeMap = ui.Map.Layer(L5CompositeNew.clip(EEZ), visParI, 'Landsat Composite Masked with NDVI and MNDWI')
+
+
+
+//Landsat 7 2000
+var L72000NDVIMask = L72000Composite.select('NDVI').gt(0.25);
+var L72000MNDWIMask = L72000Composite.select('MNDWI').gt(-0.50);
+var L72000CompositeNew = L72000Composite
+                        .updateMask(L72000NDVIMask)
+                        .updateMask(L72000MNDWIMask)
+                        .updateMask(elevationMask)
+var L72000CompositeElev = L72000Composite.updateMask(elevationMask)
+
+var L72000CompositeMapA = ui.Map.Layer(L72000CompositeElev.clip(EEZ), visParI, 'Landsat Composite')
+                        
+var L72000CompositeMap = ui.Map.Layer(L72000CompositeNew.clip(EEZ), visParI, 'Landsat Composite Masked with NDVI and MNDWI')
+
+
+
+
+//Landsat 7 2010
+var L72010NDVIMask = L72010Composite.select('NDVI').gt(0.25);
+var L72010MNDWIMask = L72010Composite.select('MNDWI').gt(-0.50);
+var L72010CompositeNew = L72010Composite
+                        .updateMask(L72010NDVIMask)
+                        .updateMask(L72010MNDWIMask)
+                        .updateMask(elevationMask)
+var L72010CompositeElev = L72010Composite.updateMask(elevationMask)
+
+var L72010CompositeMapA = ui.Map.Layer(L72010CompositeElev.clip(EEZ), visParI, 'Landsat Composite')
+                        
+var L72010CompositeMap = ui.Map.Layer(L72010CompositeNew.clip(EEZ), visParI, 'Landsat Composite Masked with NDVI and MNDWI')
+
+
+
+//Landsat 8
+var L8NDVIMask = L8Composite.select('NDVI').gt(0.25);
+var L8MNDWIMask = L8Composite.select('MNDWI').gt(-0.50);
+var L8CompositeNew = L8Composite
+                        .updateMask(L8NDVIMask)
+                        .updateMask(L8MNDWIMask)
+                        .updateMask(elevationMask)
+var L8CompositeElev = L8Composite.updateMask(elevationMask)
+
+var L8CompositeMapA = ui.Map.Layer(L8CompositeElev.clip(EEZ), visParII, 'Landsat Composite')
+                        
+var L8CompositeMap = ui.Map.Layer(L8CompositeNew.clip(EEZ), visParII, 'Landsat Composite Masked with NDVI and MNDWI')
+
+
+
+
+
+
+//                    ===============================
+//                     Set up Drop Down for Year Options 
+//                    ===============================
+// Create a function to render a map layer configured by the user inputs.
+function redraw() {
+  Map.layers().reset();
+  var layer = select.getValue();
+  var image;
+  if (layer == y1990) {
+  Map.layers().set(0,L5CompositeMapA)
+  Map.layers().set(1,L5CompositeMap)
+  } else if (layer == y2000) {
+  Map.layers().set(0,L72000CompositeMapA)
+  Map.layers().set(1,L72000CompositeMap)
+  } else if (layer == y2010) {
+  Map.layers().set(0,L72010CompositeMapA)
+  Map.layers().set(1,L72010CompositeMap)
+  } else if (layer == y2020) {
+  Map.layers().set(0,L8CompositeMapA)
+  Map.layers().set(1,L8CompositeMap)
+  }
+  for (var i = 0; i < select.length; ++i) {
+    var constraint = select[i];
+    var mode = constraint.mode.getValue();
+    var value = parseFloat(constraint.value.getValue());
+    if (mode == GREATER_THAN) {
+      image = image.updateMask(constraint.image.gt(value));
+    } else {
+      image = image.updateMask(constraint.image.lt(value));
+    }
+  }
+  
+}
+
+// Invoke the redraw function once at start up to initialize the map.
+redraw();
+
+//                    ===============================
+//                     Set up "Run" Button 
+//                    ===============================
+
+runButton.onClick(function classify() {
+  
+  //Mask out areas without Mangrove based on elevation, NDVI and MNDWI
+
+                        
+//Begin assembling samples
+
+// Assuming the order is urban, vegetation, then water.
+var region = layers.get(0);
+var mangLayer = layers.get(1);
+var nonLayer = layers.get(2);
+
+var regObj = region.getEeObject()
+
+
+var classes = mangLayer.getEeObject().merge(nonLayer.getEeObject())
+
+var bands = ['B4','B5','B3','NDVI','MNDWI','SR','GCVI']
+var bands2 = ['B5','B6','B4','NDVI','MNDWI','SR','GCVI']
+
+var paletteMAP = [
+    'FFFFFF', // NonMangrove (Class value 0)
+    '#00FF00', // Mangrove / Cultivated Areas (Class value 1)
+    ];
+
+
+//////////////////////////////////////
+//////    1990            //////////
+//////////////////////////////////////
+
+var layer = select.getValue();
+  var image;
+  if (layer == y1990) {
+
+    var image1990 = L5CompositeElev.select(bands).clip(regObj)
+    //RF for 1990
+    var samples1990 = image1990.sampleRegions({
+    collection: classes, // Set of geometries selected in 4.1
+    properties: ['landcover'], // Label from each geometry
+    scale: 30 // Make each sample the same size as Landsat pixel
+    }).randomColumn('random'); // creates a column with random numbers
+
+    var split1990 = 0.8; // Roughly 80% for training, 20% for testing.
+    var training1990 = samples1990.filter(ee.Filter.lt('random', split1990));
+    var testing1990 = samples1990.filter(ee.Filter.gte('random', split1990));
+
+    print('Samples n =', samples1990.aggregate_count('.all'));
+    print('Training n =', training1990.aggregate_count('.all'));
+    print('Testing n =', testing1990.aggregate_count('.all'));
+
+    //Begin Random Forest Classification
+    var classifier1990 = ee.Classifier.smileRandomForest(100,5).train({
+    features: training1990.select(['B4','B5','B3','NDVI','MNDWI','SR','GCVI', 'landcover']),
+    classProperty: 'landcover',
+    inputProperties: bands
+    });
+
+    var classifiedrf1990 = image1990 // select the predictors
+    .classify(classifier1990); // apply the Random Forest
+
+    var validation1990 = testing1990.classify(classifier1990);
+    var testAccuracy1990 = validation1990.errorMatrix('landcover', 'classification');
+    print('Validation error matrix RF: ', testAccuracy1990);
+    print('Validation overall accuracy RF: ', testAccuracy1990.accuracy());
+
+
+
+    var classMask1990 = classifiedrf1990.select('classification').gt(0)
+
+
+    var classed1990 = classifiedrf1990.updateMask(classMask1990)
+
+    var classMaskGMW1990 = classifiedrf1990.updateMask(classMask1990).clip(GMW)
+
+    // // Display the classification results.
+
+    var classRf1990 = ui.Map.Layer(classed1990.clip(regObj)
+              , {min: 0, max: 3, palette:paletteMAP}, 'Classification Results')
+              
+     var classRfGMW1990 = ui.Map.Layer(classMaskGMW1990.clip(regObj)
+               , {min: 0, max: 3, palette:paletteMAP}, 'Classification Results Masked to GMW Buffer')
+
+
+     Map.layers().set(2, classRf1990);
+   Map.layers().set(3, classRfGMW1990);
+     
+     expButton.onClick(function() {
+              // Export the image to Drive.
+               Export.image.toDrive({
+              image: classifiedrf1990.clip(regObj),
+               description: 'RandomForestResults'})
+        });
+        
+   panelAcc2.clear()
+  panelAcc2.add(ui.Label(testAccuracy1990.accuracy().getInfo().toFixed(3)));
+
+}
+
+
+
+//////////////////////////////////////
+//////    2000             //////////
+//////////////////////////////////////
+else if (layer == y2000) {
+
+    var image2000 = L72000CompositeElev.select(bands).clip(regObj)
+    //RF for 2020
+    var samples2000 = image2000.sampleRegions({
+    collection: classes, // Set of geometries selected in 4.1
+    properties: ['landcover'], // Label from each geometry
+    scale: 30 // Make each sample the same size as Landsat pixel
+    }).randomColumn('random'); // creates a column with random numbers
+
+    var split2000 = 0.8; // Roughly 80% for training, 20% for testing.
+    var training2000 = samples2000.filter(ee.Filter.lt('random', split2000));
+    var testing2000 = samples2000.filter(ee.Filter.gte('random', split2000));
+
+    print('Samples n =', samples2000.aggregate_count('.all'));
+    print('Training n =', training2000.aggregate_count('.all'));
+    print('Testing n =', testing2000.aggregate_count('.all'));
+
+//Begin Random Forest Classification
+    var classifier2000 = ee.Classifier.smileRandomForest(100,5).train({
+    features: training2000.select(['B4','B5','B3','NDVI','MNDWI','SR','GCVI', 'landcover']),
+    classProperty: 'landcover',
+    inputProperties: bands
+    });
+
+    var classifiedrf2000 = image2000 // select the predictors
+    .classify(classifier2000); // apply the Random Forest
+
+    var validation2000 = testing2000.classify(classifier2000);
+    var testAccuracy2000 = validation2000.errorMatrix('landcover', 'classification');
+    print('Validation error matrix RF: ', testAccuracy2000);
+    print('Validation overall accuracy RF: ', testAccuracy2000.accuracy());
+
+
+    var classMask2000 = classifiedrf2000.select('classification').gt(0)
+
+
+    var classed2000 = classifiedrf2000.updateMask(classMask2000)
+
+    var classMaskGMW2000 = classifiedrf2000.updateMask(classMask2000).clip(GMW)
+
+    // // Display the classification results.
+
+    var classRf2000 = ui.Map.Layer(classed2000.clip(regObj)
+              , {min: 0, max: 3, palette:paletteMAP}, 'Classification Results')
+              
+    var classRfGMW2000 = ui.Map.Layer(classMaskGMW2000.clip(regObj)
+              , {min: 0, max: 3, palette:paletteMAP}, 'Classification Results Masked to GMW Buffer')
+
+
+    Map.layers().set(2, classRf2000);
+    Map.layers().set(3, classRfGMW2000);
+    
+    expButton.onClick(function() {
+              // Export the image to Drive.
+               Export.image.toDrive({
+              image: classifiedrf2000.clip(regObj),
+               description: 'RandomForestResults'})
+        });
+        
+   panelAcc2.clear()
+  panelAcc2.add(ui.Label(testAccuracy2000.accuracy().getInfo().toFixed(3)));
+
+
+  }
+
+
+//////////////////////////////////////
+//////    2010             //////////
+//////////////////////////////////////
+else if (layer == y2010) {
+  
+    var image2010 = L72010CompositeElev.select(bands).clip(regObj)
+    //RF for 2020
+    var samples2010 = image2010.sampleRegions({
+    collection: classes, // Set of geometries selected in 4.1
+    properties: ['landcover'], // Label from each geometry
+    scale: 30 // Make each sample the same size as Landsat pixel
+    }).randomColumn('random'); // creates a column with random numbers
+
+    var split2010 = 0.8; // Roughly 80% for training, 20% for testing.
+    var training2010 = samples2010.filter(ee.Filter.lt('random', split2010));
+    var testing2010 = samples2010.filter(ee.Filter.gte('random', split2010));
+
+    print('Samples n =', samples2010.aggregate_count('.all'));
+    print('Training n =', training2010.aggregate_count('.all'));
+    print('Testing n =', testing2010.aggregate_count('.all'));
+
+    //Begin Random Forest Classification
+    var classifier2010 = ee.Classifier.smileRandomForest(100,5).train({
+    features: training2010.select(['B4','B5','B3','NDVI','MNDWI','SR','GCVI', 'landcover']),
+    classProperty: 'landcover',
+    inputProperties: bands
+    });
+
+    var classifiedrf2010 = image2010 // select the predictors
+    .classify(classifier2010); // apply the Random Forest
+
+    var validation2010 = testing2010.classify(classifier2010);
+    var testAccuracy2010 = validation2010.errorMatrix('landcover', 'classification');
+    print('Validation error matrix RF: ', testAccuracy2010);
+    print('Validation overall accuracy RF: ', testAccuracy2010.accuracy());
+
+
+    var classMask2010 = classifiedrf2010.select('classification').gt(0)
+
+
+    var classed2010 = classifiedrf2010.updateMask(classMask2010)
+
+    var classMaskGMW2010 = classifiedrf2010.updateMask(classMask2010).clip(GMW)
+
+// // Display the classification results.
+
+    var classRf2010 = ui.Map.Layer(classed2010.clip(regObj)
+              , {min: 0, max: 3, palette:paletteMAP}, 'Classification Results')
+              
+    var classRfGMW2010 = ui.Map.Layer(classMaskGMW2010.clip(regObj)
+              , {min: 0, max: 3, palette:paletteMAP}, 'Classification Results Masked to GMW Buffer')
+
+
+    Map.layers().set(2, classRf2010);
+     Map.layers().set(3, classRfGMW2010);
+
+    expButton.onClick(function() {
+              // Export the image to Drive.
+               Export.image.toDrive({
+              image: classifiedrf2010.clip(regObj),
+               description: 'RandomForestResults'})
+        });
+        
+   panelAcc2.clear()
+  panelAcc2.add(ui.Label(testAccuracy2010.accuracy().getInfo().toFixed(3)));
+
+}
+
+
+
+
+//////////////////////////////////////
+//////    2020            //////////
+//////////////////////////////////////
+else if (layer == y2020) {
+
+    var image2020 = L8CompositeElev.select(bands2).clip(regObj)
+    //RF for 2020
+    var samples2020 = image2020.sampleRegions({
+    collection: classes, // Set of geometries selected in 4.1
+    properties: ['landcover'], // Label from each geometry
+    scale: 30 // Make each sample the same size as Landsat pixel
+    }).randomColumn('random'); // creates a column with random numbers
+
+    var split2020 = 0.8; // Roughly 80% for training, 20% for testing.
+    var training2020 = samples2020.filter(ee.Filter.lt('random', split2020));
+    var testing2020 = samples2020.filter(ee.Filter.gte('random', split2020));
+
+    print('Samples n =', samples2020.aggregate_count('.all'));
+    print('Training n =', training2020.aggregate_count('.all'));
+    print('Testing n =', testing2020.aggregate_count('.all'));
+
+    //Begin Random Forest Classification
+    var classifier2020 = ee.Classifier.smileRandomForest(100,5).train({
+    features: training2020.select(['B5','B6','B4','NDVI','MNDWI','SR','GCVI', 'landcover']),
+    classProperty: 'landcover',
+    inputProperties: bands2
+    });
+
+    var classifiedrf2020 = image2020 // select the predictors
+    .classify(classifier2020); // apply the Random Forest
+
+    var validation2020 = testing2020.classify(classifier2020);
+    var testAccuracy2020 = validation2020.errorMatrix('landcover', 'classification');
+    print('Validation error matrix RF: ', testAccuracy2020);
+    print('Validation overall accuracy RF: ', testAccuracy2020.accuracy());
+
+
+    var classMask2020 = classifiedrf2020.select('classification').gt(0)
+
+
+    var classed2020 = classifiedrf2020.updateMask(classMask2020)
+
+    var classMaskGMW2020 = classifiedrf2020.updateMask(classMask2020).clip(GMW)
+
+    // // Display the classification results.
+
+    var classRf2020 = ui.Map.Layer(classed2020.clip(regObj)
+              , {min: 0, max: 3, palette:paletteMAP}, 'Classification Results')
+              
+    var classRfGMW2020 = ui.Map.Layer(classMaskGMW2020.clip(regObj)
+              , {min: 0, max: 3, palette:paletteMAP}, 'Classification Results Masked to GMW Buffer')
+
+
+    Map.layers().set(2, classRf2020);
+     Map.layers().set(3, classRfGMW2020);
+    
+    expButton.onClick(function() {
+              // Export the image to Drive.
+               Export.image.toDrive({
+              image: classifiedrf2020.clip(regObj),
+               description: 'RandomForestResults'})
+        });
+        
+      panelAcc2.clear()
+       panelAcc2.add(ui.Label(testAccuracy2020.accuracy().getInfo().toFixed(3)));
+}
+
+  for (var i = 0; i < select.length; ++i) {
+    var constraint = select[i];
+    var mode = constraint.mode.getValue();
+    var value = parseFloat(constraint.value.getValue());
+    if (mode == GREATER_THAN) {
+      image = image.updateMask(constraint.image.gt(value));
+    } else {
+      image = image.updateMask(constraint.image.lt(value));
+    }
+  }
+
+
+     
+        
+        
+}
+
+
+)
+
+
